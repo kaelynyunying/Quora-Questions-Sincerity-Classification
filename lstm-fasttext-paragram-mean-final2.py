@@ -83,7 +83,6 @@ print(str(len(train['question_text'])))
 docs_sample = train.sample(n = 130000, random_state = 1)
 docs_sample['original'] = docs_sample['question_text']
 docs_sample['question_text'] = docs_sample['question_text'].map(preprocess)
-print('Pre-processing is done.')
 
 #building dictionary and corpus for LDA
 dictionary = gensim.corpora.Dictionary(docs_sample['question_text'])
@@ -242,10 +241,16 @@ sub = test[['qid']]
 del train, test
 gc.collect()
 
+print("Finish preprocessing for train and test")
+
 lem = WordNetLemmatizer()
 word_index = tokenizer.word_index
 max_features = len(word_index)+1
 
+#Word embeddings
+#Here the pre-trained word embeddings' dimension is set to 300. 
+#We can use these embeddings by averaging or maxpooling and use it as unput for input layer
+#The matrix = weight of the input layer.
 def load_glove(word_index):
     EMBEDDING_FILE = '../input/embeddings/glove.840B.300d/glove.840B.300d.txt'
     def get_coefs(word,*arr): return word, np.asarray(arr, dtype='float32')
@@ -299,7 +304,7 @@ del embedding_matrix_1, embedding_matrix_3
 gc.collect()
 np.shape(embedding_matrix)
 
-
+#Attention method 
 class AttentionWeightedAverage(Layer):
     """
     Computes a weighted average of the different channels across timesteps.
@@ -416,7 +421,11 @@ class AdamW(Optimizer):
         base_config = super(AdamW, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-
+#First method uses LSTM and GRU
+#The model is in 3 parts
+#Layer 1 : Embedding Layer with 300 dimensions
+#Layer 2: Hidden Layer (We use LSTM and GRU here)
+#Layer 3 : Output Layer : dense layer to support activation method (either 'relu' or sigmoid)
 def LSTM_GRU(spatialdropout=0.20, rnn_units=64, weight_decay=0.07):
     K.clear_session()       
     x_input = Input(shape=(maxlen,))
@@ -439,7 +448,11 @@ def LSTM_GRU(spatialdropout=0.20, rnn_units=64, weight_decay=0.07):
     model.compile(loss='binary_crossentropy', optimizer=AdamW(weight_decay=weight_decay),)
     return model
 
-
+#Second method uses GRU
+#The model is in 3 parts
+#Layer 1 : Embedding Layer with 300 dimensions
+#Layer 2: Hidden Layer (We use  GRU here)
+#Layer 3 : Output Layer : dense layer to support activation method (either 'relu' or sigmoid)
 def poolRNN(spatialdropout=0.2, gru_units=64, weight_decay=0.04):
     K.clear_session()
     inp = Input(shape=(maxlen,))
@@ -471,7 +484,12 @@ def poolRNN(spatialdropout=0.2, gru_units=64, weight_decay=0.04):
     model.compile(loss='binary_crossentropy', optimizer=AdamW(weight_decay=weight_decay))
     return model
 
-
+#Third method uses LSTM  and CNN
+#CNN -> Conv1D- CNN for 1 dimension which are texts.
+#The model is in 3 parts
+#Layer 1 : Embedding Layer with 300 dimensions
+#Layer 2: Hidden Layer (We use LSTM and CNN here)
+#Layer 3 : Output Layer : dense layer to support activation method (either 'relu' or sigmoid)
 def BiLSTM_CNN(spatialdropout=0.2, rnn_units=64, filters=[100, 80, 30, 12], weight_decay=0.10):
     K.clear_session()       
     inp = Input(shape=(maxlen,))
@@ -504,32 +522,9 @@ def BiLSTM_CNN(spatialdropout=0.2, rnn_units=64, filters=[100, 80, 30, 12], weig
     model = Model(inputs=inp, outputs=x)
     model.compile(loss='binary_crossentropy', optimizer=AdamW(weight_decay=weight_decay))
     return model
-
-def singleRNN(spatialdropout=0.20, rnn_units=64, weight_decay=0.08):
-    K.clear_session()
-    inp = Input(shape=(maxlen,))
-    embedding_layer = Embedding(max_features,
-                                embed_size,
-                                weights=[embedding_matrix],
-                                input_length=maxlen,
-                                trainable=False)(inp)
-    embedding_layer = SpatialDropout1D(spatialdropout, seed=1024)(embedding_layer)
-
-    x = Bidirectional(CuDNNGRU(rnn_units, return_sequences=True, 
-                                   kernel_initializer=glorot_uniform(seed=111000), 
-                                   recurrent_initializer=Orthogonal(gain=1.0, seed=123000)))(embedding_layer)
-
-    x = AttentionWeightedAverage()(x)
-    x = Dense(32, kernel_initializer=glorot_uniform(seed=111000))(x)
-    x = Dropout(0.12, seed=1024)(x)
-    x = BatchNormalization()(x)
-    x = ReLU()(x)
-    output_layer = Dense(1, activation="sigmoid", kernel_initializer=glorot_uniform(seed=111000))(x)
-    model = Model(inputs=inp, outputs=output_layer)
-    model.compile(loss='binary_crossentropy', optimizer=AdamW(weight_decay=weight_decay))
-    return model
-
-
+#Here we do Stratified k validation 
+#as well as ensemble method (Bagging)
+#Print out submission.csv
 def f1_smart(y_true, y_pred):
     args = np.argsort(y_pred)
     tp = y_true.sum()
